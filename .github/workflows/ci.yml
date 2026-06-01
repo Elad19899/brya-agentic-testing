@@ -1,0 +1,259 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .github/workflows/ci.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Brya Automation Framework — Continuous Integration
+#
+# Pipeline shape:
+#   ┌─ install ───┐
+#   │             ├─→ ui-tests  ─┐
+#   │             │              ├─→ allure-report ─→ deploy-report (main only)
+#   │             └─→ api-tests ─┘
+#
+# Why split UI and API into separate jobs?
+#   - They have very different runtimes (UI is browser-heavy, API is fast).
+#   - Running them in parallel halves wall-clock time.
+#   - It lets us choose different runner sizes per job in the future.
+#   - When something breaks, the failed job's name (ui vs api) tells you
+#     immediately whether the issue is product-side or infra-side.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Brya CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Nightly regression run at 03:00 UTC. Catches drift between business
+    # hours when no one is pushing code.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: 'Optional --grep filter (e.g. @smoke)'
+        required: false
+        default: ''
+
+# Allow only one workflow run per branch — newer commits cancel older ones.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  # Mark the run so server logs / analytics can distinguish CI traffic.
+  TEST_ENV: ci
+  CI: 'true'
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 1: Install dependencies + cache (shared by all downstream jobs)
+  # ───────────────────────────────────────────────────────────────────────────
+  install:
+    name: Install & cache
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ hashFiles('package.json') }}
+
+      - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 2: UI tests (parallel matrix over browsers)
+  # ───────────────────────────────────────────────────────────────────────────
+  ui-tests:
+    name: UI tests (${{ matrix.project }})
+    needs: install
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each entry is a Playwright project from playwright.config.ts.
+        project: [ui-chromium, ui-firefox, ui-webkit, ui-mobile]
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ hashFiles('package.json') }}
+
+      - name: Ensure Playwright browsers
+        run: npx playwright install --with-deps ${{ matrix.project == 'ui-webkit' && 'webkit' || matrix.project == 'ui-firefox' && 'firefox' || 'chromium' }}
+
+      - name: Run UI tests — ${{ matrix.project }}
+        run: npx playwright test --project=${{ matrix.project }} ${{ github.event.inputs.test_filter && format('--grep={0}', github.event.inputs.test_filter) || '' }}
+        env:
+          BASE_URL: https://www.brya.com
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.project }}
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload Allure raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-ui-${{ matrix.project }}
+          path: allure-results/
+          retention-days: 14
+
+      - name: Upload traces & videos on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: traces-${{ matrix.project }}
+          path: test-results/
+          retention-days: 14
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 3: API tests (runs in parallel with UI matrix)
+  # ───────────────────────────────────────────────────────────────────────────
+  api-tests:
+    name: API tests
+    needs: install
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm install
+
+      # API tests do not launch browsers, but the Playwright runtime needs
+      # *some* browser binary present to satisfy its driver bootstrap. We
+      # install only chromium to keep this job fast.
+      - name: Install Playwright (chromium only)
+        run: npx playwright install --with-deps chromium
+
+      - name: Run API tests
+        run: npx playwright test --project=api ${{ github.event.inputs.test_filter && format('--grep={0}', github.event.inputs.test_filter) || '' }}
+        env:
+          API_BASE_URL: https://www.brya.com
+
+      - name: Upload Allure raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-api
+          path: allure-results/
+          retention-days: 14
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-api
+          path: test-results/junit.xml
+          retention-days: 14
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 4: Merge all Allure results and generate the combined report.
+  # Runs even if some test jobs failed — we *want* the report in that case.
+  # ───────────────────────────────────────────────────────────────────────────
+  allure-report:
+    name: Allure report
+    needs: [ui-tests, api-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Download all Allure result artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-allure
+          pattern: allure-results-*
+
+      - name: Merge results into one folder
+        run: |
+          mkdir -p allure-results
+          find all-allure -type f -name '*.json' -exec cp -n {} allure-results/ \;
+          find all-allure -type f -name '*.txt' -exec cp -n {} allure-results/ \;
+          find all-allure -type f -name '*.png' -exec cp -n {} allure-results/ \;
+          find all-allure -type f -name '*.webm' -exec cp -n {} allure-results/ \;
+          ls -la allure-results | head -50
+
+      - name: Restore Allure history (so trends survive across runs)
+        uses: actions/cache@v4
+        with:
+          path: allure-history
+          key: allure-history-${{ github.run_id }}
+          restore-keys: |
+            allure-history-
+
+      - name: Copy history into results
+        run: |
+          if [ -d allure-history ]; then
+            mkdir -p allure-results/history
+            cp -r allure-history/* allure-results/history/ 2>/dev/null || true
+          fi
+
+      - name: Generate Allure report
+        uses: simple-elf/allure-report-action@v1.9
+        with:
+          allure_results: allure-results
+          allure_report: allure-report
+          allure_history: allure-history
+          keep_reports: 20
+
+      - name: Upload generated Allure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report
+          path: allure-report/
+          retention-days: 30
+
+      # Publish to GitHub Pages on main only — keeps history clean.
+      - name: Publish to GitHub Pages
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: allure-report
+          publish_branch: gh-pages
+          keep_files: false
