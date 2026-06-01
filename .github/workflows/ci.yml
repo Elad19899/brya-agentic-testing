@@ -28,10 +28,44 @@ on:
     # Nightly regression run at 03:00 UTC. Catches drift between business
     # hours when no one is pushing code.
     - cron: '0 3 * * *'
+  # Manual trigger — gives full control over WHICH tests run, from the whole
+  # suite down to a single test. Combine the inputs below:
+  #   • Whole suite ........ test_scope=all      (defaults)
+  #   • Only one layer ..... test_scope=ui | api
+  #   • One browser ........ ui_project=ui-webkit (etc.)
+  #   • One spec file ...... test_path=tests/ui/home.spec.ts
+  #   • One test ........... grep="exact test title"   (or a @tag)
+  #   • One test, one file . test_path=...spec.ts  +  grep="title"
   workflow_dispatch:
     inputs:
-      test_filter:
-        description: 'Optional --grep filter (e.g. @smoke)'
+      test_scope:
+        description: 'Which layer(s) to run'
+        type: choice
+        required: false
+        default: all
+        options:
+          - all
+          - ui
+          - api
+      ui_project:
+        description: 'UI browser project (ignored when scope=api)'
+        type: choice
+        required: false
+        default: all
+        options:
+          - all
+          - ui-chromium
+          - ui-firefox
+          - ui-webkit
+          - ui-mobile
+      test_path:
+        description: 'Optional spec file or folder, e.g. tests/ui/home.spec.ts'
+        type: string
+        required: false
+        default: ''
+      grep:
+        description: 'Optional --grep: a @tag or a test-title regex (e.g. "homepage loads")'
+        type: string
         required: false
         default: ''
 
@@ -47,6 +81,64 @@ env:
   CI: 'true'
 
 jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 0: Configure the run — turns the workflow_dispatch inputs into a plan.
+  #
+  # Decides three things, consumed by the test jobs below:
+  #   • run_ui / run_api — which layers execute (from `test_scope`)
+  #   • ui_matrix        — which browser project(s) the UI job fans out over
+  #                        (one project if `ui_project` is set, else all four)
+  #
+  # For non-manual events (push / pull_request / schedule) every input is empty,
+  # so the plan falls through to "run everything" — preserving prior behaviour.
+  # ───────────────────────────────────────────────────────────────────────────
+  configure:
+    name: Configure run
+    runs-on: ubuntu-latest
+    outputs:
+      run_ui: ${{ steps.plan.outputs.run_ui }}
+      run_api: ${{ steps.plan.outputs.run_api }}
+      ui_matrix: ${{ steps.plan.outputs.ui_matrix }}
+    steps:
+      - name: Build run plan
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          SCOPE: ${{ github.event.inputs.test_scope }}
+          UI_PROJECT: ${{ github.event.inputs.ui_project }}
+        run: |
+          scope="${SCOPE:-all}"
+          ui_project="${UI_PROJECT:-all}"
+
+          # Default for push / PR / schedule: run the whole suite.
+          run_ui=true
+          run_api=true
+
+          # Manual runs honour the chosen scope.
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            case "$scope" in
+              ui)  run_ui=true;  run_api=false ;;
+              api) run_ui=false; run_api=true  ;;
+              *)   run_ui=true;  run_api=true  ;;
+            esac
+          fi
+
+          # UI matrix: one project if the user pinned one, otherwise all four.
+          all='["ui-chromium","ui-firefox","ui-webkit","ui-mobile"]'
+          if [ "$EVENT" = "workflow_dispatch" ] && [ -n "$ui_project" ] && [ "$ui_project" != "all" ]; then
+            ui_matrix="[\"$ui_project\"]"
+          else
+            ui_matrix="$all"
+          fi
+
+          {
+            echo "run_ui=$run_ui"
+            echo "run_api=$run_api"
+            echo "ui_matrix=$ui_matrix"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Plan → ui=$run_ui  api=$run_api  ui_matrix=$ui_matrix"
+
   # ───────────────────────────────────────────────────────────────────────────
   # JOB 1: Install dependencies + cache (shared by all downstream jobs)
   # ───────────────────────────────────────────────────────────────────────────
@@ -82,13 +174,16 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   ui-tests:
     name: UI tests (${{ matrix.project }})
-    needs: install
+    needs: [configure, install]
+    # Skip entirely when a manual run scoped to API only.
+    if: needs.configure.outputs.run_ui == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Each entry is a Playwright project from playwright.config.ts.
-        project: [ui-chromium, ui-firefox, ui-webkit, ui-mobile]
+        # Project list comes from the configure job: all four browsers by
+        # default, or a single one when `ui_project` was chosen manually.
+        project: ${{ fromJSON(needs.configure.outputs.ui_matrix) }}
 
     steps:
       - name: Checkout source
@@ -113,9 +208,19 @@ jobs:
         run: npx playwright install --with-deps ${{ matrix.project == 'ui-webkit' && 'webkit' || matrix.project == 'ui-firefox' && 'firefox' || 'chromium' }}
 
       - name: Run UI tests — ${{ matrix.project }}
-        run: npx playwright test --project=${{ matrix.project }} ${{ github.event.inputs.test_filter && format('--grep={0}', github.event.inputs.test_filter) || '' }}
+        # Build the argv as a bash array so a test_path or a grep value with
+        # spaces (e.g. a full test title) is passed as a single argument.
         env:
           BASE_URL: https://www.brya.com
+          PROJECT: ${{ matrix.project }}
+          TEST_PATH: ${{ github.event.inputs.test_path }}
+          GREP: ${{ github.event.inputs.grep }}
+        run: |
+          args=(--project="$PROJECT")
+          [ -n "$TEST_PATH" ] && args+=("$TEST_PATH")
+          [ -n "$GREP" ] && args+=(--grep "$GREP")
+          echo "Running: npx playwright test ${args[*]}"
+          npx playwright test "${args[@]}"
 
       - name: Upload Playwright HTML report
         if: always()
@@ -146,7 +251,9 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   api-tests:
     name: API tests
-    needs: install
+    needs: [configure, install]
+    # Skip entirely when a manual run scoped to UI only.
+    if: needs.configure.outputs.run_api == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -169,9 +276,18 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run API tests
-        run: npx playwright test --project=api ${{ github.event.inputs.test_filter && format('--grep={0}', github.event.inputs.test_filter) || '' }}
+        # Same argv-array approach as the UI job so a test_path / spaced grep
+        # value survives word-splitting.
         env:
           API_BASE_URL: https://www.brya.com
+          TEST_PATH: ${{ github.event.inputs.test_path }}
+          GREP: ${{ github.event.inputs.grep }}
+        run: |
+          args=(--project=api)
+          [ -n "$TEST_PATH" ] && args+=("$TEST_PATH")
+          [ -n "$GREP" ] && args+=(--grep "$GREP")
+          echo "Running: npx playwright test ${args[*]}"
+          npx playwright test "${args[@]}"
 
       - name: Upload Allure raw results
         if: always()

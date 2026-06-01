@@ -113,6 +113,29 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
 
+    // ── UI tests, desktop Firefox ─────────────────────────────────────────
+    {
+      name: 'ui-firefox',
+      testMatch: /tests\/ui\/.*\.spec\.ts/,
+      use: { ...devices['Desktop Firefox'] },
+    },
+
+    // ── UI tests, desktop WebKit (Safari engine) ──────────────────────────
+    {
+      name: 'ui-webkit',
+      testMatch: /tests\/ui\/.*\.spec\.ts/,
+      use: { ...devices['Desktop Safari'] },
+    },
+
+    // ── UI tests, mobile viewport (Pixel 5 / mobile Chrome) ───────────────
+    // Same specs, exercised at a mobile viewport + touch emulation so the
+    // responsive layer is covered without a separate test tree.
+    {
+      name: 'ui-mobile',
+      testMatch: /tests\/ui\/.*\.spec\.ts/,
+      use: { ...devices['Pixel 5'] },
+    },
+
     // ── API tests ────────────────────────────────────────────────────────
     // API tests do not launch a browser context — they use Playwright's
     // `request` fixture. Keeping them in a dedicated project means CI can
