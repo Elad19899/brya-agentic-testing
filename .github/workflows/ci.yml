@@ -314,6 +314,11 @@ jobs:
     needs: [ui-tests, api-tests]
     if: always()
     runs-on: ubuntu-latest
+    # The "Publish to GitHub Pages" step pushes to the gh-pages branch using
+    # GITHUB_TOKEN, which needs write access to repository contents. Without
+    # this the push is rejected with HTTP 403.
+    permissions:
+      contents: write
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
