@@ -1,6 +1,7 @@
 # ── Dependencies ──────────────────────────────────────────────
+# NOTE: package-lock.json is intentionally committed — CI's setup-node
+# `cache: 'npm'` requires a lock file in the repo to build its cache key.
 node_modules/
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
