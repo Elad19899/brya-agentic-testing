@@ -1,0 +1,2 @@
+[2026-06-04T07:21:16.578Z] [INFO] ApiClient initialized for https://www.brya.com
+[2026-06-04T07:21:16.578Z] [INFO] GET /favicon.ico
