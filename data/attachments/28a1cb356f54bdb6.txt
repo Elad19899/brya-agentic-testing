@@ -1,0 +1,3 @@
+[2026-06-05T07:03:28.570Z] [INFO] ApiClient initialized for https://www.brya.com
+[2026-06-05T07:03:28.570Z] [INFO] GET /about/
+[2026-06-05T07:03:28.643Z] [INFO] GET /about
