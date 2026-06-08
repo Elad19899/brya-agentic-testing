@@ -1,0 +1,1 @@
+[2026-06-08T07:27:00.850Z] [INFO] Navigating to About (/about)
