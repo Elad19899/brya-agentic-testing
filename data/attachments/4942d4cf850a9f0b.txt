@@ -1,2 +1,0 @@
-[2026-06-08T07:27:31.281Z] [INFO] Navigating to Home (/)
-[2026-06-08T07:27:33.033Z] [INFO] Navigating to Home (/)
