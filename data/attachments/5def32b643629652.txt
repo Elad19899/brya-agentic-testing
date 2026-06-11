@@ -1,0 +1,9 @@
+[2026-06-11T07:26:53.965Z] [INFO] Navigating to Home (/)
+[2026-06-11T07:26:54.607Z] [INFO] ApiClient initialized for https://www.brya.com
+[2026-06-11T07:26:55.565Z] [INFO] HEAD https://www.brya.com/
+[2026-06-11T07:26:55.979Z] [INFO] HEAD https://www.brya.com/about/
+[2026-06-11T07:26:56.037Z] [INFO] HEAD https://www.brya.com/privacy-policy/
+[2026-06-11T07:26:56.079Z] [INFO] HEAD https://www.brya.com/terms-of-service/
+[2026-06-11T07:26:56.166Z] [INFO] HEAD https://www.brya.com/contact/
+[2026-06-11T07:26:56.206Z] [INFO] HEAD https://brya.crisp.help/en/
+[2026-06-11T07:26:57.138Z] [INFO] HEAD https://www.brya.com/accessibility/

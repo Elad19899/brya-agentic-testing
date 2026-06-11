@@ -1,2 +1,0 @@
-[2026-06-10T07:04:16.883Z] [INFO] ApiClient initialized for https://www.brya.com
-[2026-06-10T07:04:16.883Z] [INFO] GET /this-route-should-not-exist-1781075056883
