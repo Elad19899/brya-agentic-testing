@@ -1,1 +1,0 @@
-[2026-06-11T07:27:00.799Z] [INFO] Navigating to Partners (/partners)
