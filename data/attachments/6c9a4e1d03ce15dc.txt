@@ -1,3 +1,0 @@
-[2026-06-12T07:18:24.618Z] [INFO] ApiClient initialized for https://www.brya.com
-[2026-06-12T07:18:24.618Z] [INFO] GET /sitemap.xml
-[2026-06-12T07:18:24.697Z] [INFO] GET /robots.txt
